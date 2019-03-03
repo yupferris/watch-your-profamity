@@ -10,6 +10,7 @@ use std::thread;
 
 enum Command {
     NSCHello,
+    NSCSMS,
     NSSMONL,
 }
 
@@ -66,20 +67,47 @@ struct User {
     name: String,
 }
 
+#[derive(Clone)]
+struct Room {
+    description: String,
+    password: Option<String>,
+}
+
 struct ServerState {
     logged_in_users: HashMap<SocketAddr, User>,
+    rooms: HashMap<String, Room>,
 }
 
 impl ServerState {
     fn new() -> ServerState {
         ServerState {
             logged_in_users: HashMap::new(),
+            rooms: HashMap::new(),
         }
     }
 }
 
 fn chat_color(color: u32) -> String {
     format!("|c0{:06x}", color)
+}
+
+fn send_room_list(stream: &mut TcpStream, server_state: Arc<Mutex<ServerState>>) -> io::Result<()> {
+    let rooms = server_state.lock().map_err(|e| Error::new(ErrorKind::Other, format!("{}", e)))?.rooms.clone();
+
+    let mut response = EzPacketBuilder::new();
+    response.write_u8(0x8c)?;
+    response.write_u8(0x01)?;
+    response.write_u8(0x01)?;
+    response.write_u8(rooms.len() as _)?;
+    for (name, room) in rooms.iter() {
+        response.write_nt(name)?;
+        response.write_nt(&room.description)?;
+    }
+    response.write_u8(0x00)?; // TODO: Proper status!!
+    for (_, room) in rooms.iter() {
+        response.write_u8(if room.password.is_some() { 1 } else { 0 })?;
+    }
+    stream.write_all(&response.finish()?)
 }
 
 fn thread_proc(stream: &mut TcpStream, server_state: Arc<Mutex<ServerState>>, server_name: &str, welcome_message: &str, client_addr: SocketAddr) -> io::Result<()> {
@@ -97,6 +125,7 @@ fn thread_proc(stream: &mut TcpStream, server_state: Arc<Mutex<ServerState>>, se
         //println!("Got command byte: {:02x}", command_byte);
         let command = match command_byte {
             0x02 => Command::NSCHello,
+            0x0a => Command::NSCSMS,
             0x0c => Command::NSSMONL,
             x => {
                 println!("{}: Unknown command byte: 0x{:02x}", client_addr, x);
@@ -116,7 +145,19 @@ fn thread_proc(stream: &mut TcpStream, server_state: Arc<Mutex<ServerState>>, se
                 response.write_u8(0x82)?;
                 response.write_u8(0x80)?;
                 response.write_nt(server_name)?;
-                stream.write(&response.finish()?)?;
+                stream.write_all(&response.finish()?)?;
+            }
+            Command::NSCSMS => {
+                let network_screen = packet.read_u8()?;
+                match network_screen {
+                    0x07 => {
+                        // Entered ScreenNetRoom
+                        send_room_list(stream, server_state.clone())?;
+                    }
+                    _ => {
+                        println!("{}: Unrecognized network screen: 0x{:02x}", client_addr, network_screen);
+                    }
+                }
             }
             Command::NSSMONL => {
                 // TODO: Probably don't need to copy here, but keeps things easy..
@@ -161,17 +202,19 @@ fn thread_proc(stream: &mut TcpStream, server_state: Arc<Mutex<ServerState>>, se
                                 response.write_u8(command_byte)?;
                                 response.write_u8(command_sub_byte)?;
                                 response.write_nt("Login successful yo!!!! Git sum")?;
-                                stream.write(&response.finish()?)?;
+                                stream.write_all(&response.finish()?)?;
 
                                 // Send welcome message(s)
                                 let mut response = EzPacketBuilder::new();
                                 response.write_u8(0x87)?;
                                 response.write_nt(&format!("{}{}", chat_color(0x11ff11), welcome_message))?;
-                                stream.write(&response.finish()?)?;
+                                stream.write_all(&response.finish()?)?;
                                 let mut response = EzPacketBuilder::new();
                                 response.write_u8(0x87)?;
                                 response.write_nt(&format!("{}{} | {}{}{} user(s) currently logged in", chat_color(0xffffff), server_name, chat_color(0xff0000), num_logged_in_users, chat_color(0xffffff)))?;
-                                stream.write(&response.finish()?)?;
+                                stream.write_all(&response.finish()?)?;
+
+                                send_room_list(stream, server_state.clone())?;
                             }
                             Err(reason) => {
                                 println!("{}: Client failed to log in as {}: {}", client_addr, username, reason);
@@ -182,7 +225,7 @@ fn thread_proc(stream: &mut TcpStream, server_state: Arc<Mutex<ServerState>>, se
                                 response.write_u8(command_byte)?;
                                 response.write_u8(0x01)?;
                                 response.write_nt(&reason)?;
-                                stream.write(&response.finish()?)?;
+                                stream.write_all(&response.finish()?)?;
                             }
                         }
                     }

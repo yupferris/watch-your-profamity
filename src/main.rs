@@ -25,10 +25,6 @@ impl EzPacketBuilder {
         }
     }
 
-    fn write_nt(&mut self, s: &str) -> io::Result<()> {
-        write!(&mut self.buffer, "{}\0", s)
-    }
-
     fn finish(self) -> io::Result<Vec<u8>> {
         let mut ret = Vec::with_capacity(4 + self.buffer.len());
         ret.write_u32::<BigEndian>(self.buffer.len() as _)?;
@@ -61,7 +57,15 @@ trait ReadNtExt: io::Read {
     }
 }
 
-impl<R: io::Read + ?Sized> ReadNtExt for R {}
+impl<R: io::Read> ReadNtExt for R {}
+
+trait WriteNtExt: io::Write {
+    fn write_nt(&mut self, s: &str) -> io::Result<()> {
+        write!(self, "{}\0", s)
+    }
+}
+
+impl<W: io::Write> WriteNtExt for W {}
 
 struct User {
     name: String,

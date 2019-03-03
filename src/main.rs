@@ -117,6 +117,25 @@ fn send_room_list(stream: &mut TcpStream, server_state: Arc<Mutex<ServerState>>)
     stream.write_all(&response.finish()?)
 }
 
+fn send_to_room_screen(stream: &mut TcpStream, server_state: Arc<Mutex<ServerState>>, room_name: &String) -> io::Result<()> {
+    let room = server_state.lock().map_err(|e| Error::new(ErrorKind::Other, format!("{}", e)))?.rooms.get(room_name).ok_or(Error::new(ErrorKind::Other, "Tried to send client to a room that doesn't exist"))?.clone();
+
+    // Send user to room screen
+    let mut response = EzPacketBuilder::new();
+    response.write_u8(0x8c)?;
+    response.write_u8(0x01)?;
+    response.write_u8(0x00)?;
+    response.write_nt(&room_name)?;
+    response.write_nt(&room.description)?;
+    response.write_u8(0x01)?;
+    stream.write_all(&response.finish()?)?;
+
+    // TODO: Send room players
+    // TODO: Send join message to all room players
+
+    Ok(())
+}
+
 fn thread_proc(stream: &mut TcpStream, server_state: Arc<Mutex<ServerState>>, server_name: &str, welcome_message: &str, client_addr: SocketAddr) -> io::Result<()> {
     loop {
         // Read packet
@@ -272,18 +291,7 @@ fn thread_proc(stream: &mut TcpStream, server_state: Arc<Mutex<ServerState>>, se
                                 response.write_nt(&format!("{}Room {}{}{} created successfully", chat_color(0xffffff), chat_color(0x00ff00), room_name, chat_color(0xffffff)))?;
                                 stream.write_all(&response.finish()?)?;
 
-                                // Send user to room screen
-                                let mut response = EzPacketBuilder::new();
-                                response.write_u8(0x8c)?;
-                                response.write_u8(0x01)?;
-                                response.write_u8(0x00)?;
-                                response.write_nt(&room_name)?;
-                                response.write_nt(&room_description)?;
-                                response.write_u8(0x01)?;
-                                stream.write_all(&response.finish()?)?;
-
-                                // TODO: Send room players
-                                // TODO: Send join message to all room players
+                                send_to_room_screen(stream, server_state.clone(), &room_name)?;
                             }
                             Err(reason) => {
                                 println!("{}: Client failed to create room {}: {}", client_addr, room_name, reason);

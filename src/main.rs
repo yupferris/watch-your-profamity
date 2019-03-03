@@ -103,7 +103,9 @@ fn send_room_list(stream: &mut TcpStream, server_state: Arc<Mutex<ServerState>>)
         response.write_nt(name)?;
         response.write_nt(&room.description)?;
     }
-    response.write_u8(0x00)?; // TODO: Proper status!!
+    for _ in rooms.iter() {
+        response.write_u8(0x00)?; // TODO: Proper status!!
+    }
     for (_, room) in rooms.iter() {
         response.write_u8(if room.password.is_some() { 1 } else { 0 })?;
     }
@@ -225,6 +227,54 @@ fn thread_proc(stream: &mut TcpStream, server_state: Arc<Mutex<ServerState>>, se
                                 response.write_u8(command_byte)?;
                                 response.write_u8(0x01)?;
                                 response.write_nt(&reason)?;
+                                stream.write_all(&response.finish()?)?;
+                            }
+                        }
+                    }
+                    2 => {
+                        // New room
+                        // TODO: Check for logged in user (shouldn't be possible to get here otherwise, but maybe clients are ass)
+                        let room_name = payload.read_nt()?;
+                        let room_description = payload.read_nt()?;
+                        let room_password = if (payload.position() as usize) < payload.get_ref().len() {
+                            Some(payload.read_nt()?)
+                        } else {
+                            None
+                        };
+
+                        let result = {
+                            let mut server_state = server_state.lock().map_err(|e| Error::new(ErrorKind::Other, format!("{}", e)))?;
+                            if server_state.rooms.contains_key(&room_name) {
+                                Err(format!("Room {} already exists", room_name))
+                            } else {
+                                let room = Room {
+                                    description: room_description,
+                                    password: room_password,
+                                };
+                                server_state.rooms.insert(room_name.clone(), room);
+                                Ok(())
+                            }
+                        };
+
+                        match result {
+                            Ok(()) => {
+                                println!("{}: Room {} created successfully", client_addr, room_name);
+
+                                // Send success response
+                                let mut response = EzPacketBuilder::new();
+                                response.write_u8(0x87)?;
+                                response.write_nt(&format!("{}Room {}{}{} created successfully", chat_color(0xffffff), chat_color(0x00ff00), room_name, chat_color(0xffffff)))?;
+                                stream.write_all(&response.finish()?)?;
+
+                                send_room_list(stream, server_state.clone())?;
+                            }
+                            Err(reason) => {
+                                println!("{}: Client failed to create room {}: {}", client_addr, room_name, reason);
+
+                                // Send error response
+                                let mut response = EzPacketBuilder::new();
+                                response.write_u8(0x87)?;
+                                response.write_nt(&format!("{}Failed to create room: {}", chat_color(0xaa0000), reason))?;
                                 stream.write_all(&response.finish()?)?;
                             }
                         }

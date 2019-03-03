@@ -78,6 +78,10 @@ impl ServerState {
     }
 }
 
+fn chat_color(color: u32) -> String {
+    format!("|c0{:06x}", color)
+}
+
 fn thread_proc(stream: &mut TcpStream, server_state: Arc<Mutex<ServerState>>, server_name: &str, welcome_message: &str, client_addr: SocketAddr) -> io::Result<()> {
     loop {
         // Read packet
@@ -162,11 +166,11 @@ fn thread_proc(stream: &mut TcpStream, server_state: Arc<Mutex<ServerState>>, se
                                 // Send welcome message(s)
                                 let mut response = EzPacketBuilder::new();
                                 response.write_u8(0x87)?;
-                                response.write_nt(welcome_message)?;
+                                response.write_nt(&format!("{}{}", chat_color(0x11ff11), welcome_message))?;
                                 stream.write(&response.finish()?)?;
                                 let mut response = EzPacketBuilder::new();
                                 response.write_u8(0x87)?;
-                                response.write_nt(&format!("{} | {} user(s) currently logged in", server_name, num_logged_in_users))?;
+                                response.write_nt(&format!("{}{} | {}{}{} user(s) currently logged in", chat_color(0xffffff), server_name, chat_color(0xff0000), num_logged_in_users, chat_color(0xffffff)))?;
                                 stream.write(&response.finish()?)?;
                             }
                             Err(reason) => {

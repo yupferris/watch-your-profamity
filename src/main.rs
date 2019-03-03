@@ -2,7 +2,7 @@ extern crate byteorder;
 
 use byteorder::{BigEndian, ReadBytesExt, WriteBytesExt};
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::io::{self, Cursor, Error, ErrorKind, Read, Write};
 use std::net::{SocketAddr, TcpListener, TcpStream};
 use std::sync::{Arc, Mutex};
@@ -71,6 +71,7 @@ struct User {
 struct Room {
     description: String,
     password: Option<String>,
+    users: HashSet<String>,
 }
 
 struct ServerState {
@@ -233,7 +234,6 @@ fn thread_proc(stream: &mut TcpStream, server_state: Arc<Mutex<ServerState>>, se
                     }
                     2 => {
                         // New room
-                        // TODO: Check for logged in user (shouldn't be possible to get here otherwise, but maybe clients are ass)
                         let room_name = payload.read_nt()?;
                         let room_description = payload.read_nt()?;
                         let room_password = if (payload.position() as usize) < payload.get_ref().len() {
@@ -247,9 +247,11 @@ fn thread_proc(stream: &mut TcpStream, server_state: Arc<Mutex<ServerState>>, se
                             if server_state.rooms.contains_key(&room_name) {
                                 Err(format!("Room {} already exists", room_name))
                             } else {
+                                let user = server_state.logged_in_users.get(&client_addr).ok_or(Error::new(ErrorKind::Other, "Client is not logged in"))?;
                                 let room = Room {
-                                    description: room_description,
+                                    description: room_description.clone(),
                                     password: room_password,
+                                    users: vec![user.name.clone()].into_iter().collect(),
                                 };
                                 server_state.rooms.insert(room_name.clone(), room);
                                 Ok(())
@@ -266,7 +268,18 @@ fn thread_proc(stream: &mut TcpStream, server_state: Arc<Mutex<ServerState>>, se
                                 response.write_nt(&format!("{}Room {}{}{} created successfully", chat_color(0xffffff), chat_color(0x00ff00), room_name, chat_color(0xffffff)))?;
                                 stream.write_all(&response.finish()?)?;
 
-                                send_room_list(stream, server_state.clone())?;
+                                // Send user to room screen
+                                let mut response = EzPacketBuilder::new();
+                                response.write_u8(0x8c)?;
+                                response.write_u8(0x01)?;
+                                response.write_u8(0x00)?;
+                                response.write_nt(&room_name)?;
+                                response.write_nt(&room_description)?;
+                                response.write_u8(0x01)?;
+                                stream.write_all(&response.finish()?)?;
+
+                                // TODO: Send room players
+                                // TODO: Send join message to all room players
                             }
                             Err(reason) => {
                                 println!("{}: Client failed to create room {}: {}", client_addr, room_name, reason);

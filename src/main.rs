@@ -136,7 +136,7 @@ fn send_to_room_screen(stream: &mut TcpStream, server_state: Arc<Mutex<ServerSta
     Ok(())
 }
 
-fn thread_proc(stream: &mut TcpStream, server_state: Arc<Mutex<ServerState>>, server_name: &str, welcome_message: &str, client_addr: SocketAddr) -> io::Result<()> {
+fn thread_loop(stream: &mut TcpStream, server_state: Arc<Mutex<ServerState>>, server_name: &str, welcome_message: &str, client_addr: SocketAddr) -> io::Result<()> {
     loop {
         // Read packet
         let size = stream.read_u32::<BigEndian>()?;
@@ -335,7 +335,7 @@ fn main() -> io::Result<()> {
 
                 let server_state = server_state.clone();
                 thread::spawn(move || {
-                    if let Err(e) = thread_proc(&mut stream, server_state.clone(), server_name, welcome_message, client_addr) {
+                    if let Err(e) = thread_loop(&mut stream, server_state.clone(), server_name, welcome_message, client_addr) {
                         println!("{}: Client errored: {}; connection dropped", client_addr, e);
                         // Log out logged in user for this connection, if any
                         match server_state.lock() {
